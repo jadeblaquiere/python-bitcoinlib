@@ -55,6 +55,15 @@ class CTRedParams(ctcoin.core.CoreRegTestParams):
     DEFAULT_PORT = 17761
     RPC_PORT = 17762
     DNS_SEEDS = ()
+    BASE58_PREFIXES = {'PUBKEY_ADDR':0x50,
+                       'SCRIPT_ADDR':0x8e,
+                       'SECRET_KEY' :0xa3}
+
+class CTIndigoParams(ctcoin.core.CoreRegTestParams):
+    MESSAGE_START = b'\xef\xbe\xad\xde'
+    DEFAULT_PORT = 7764
+    RPC_PORT = 7765
+    DNS_SEEDS = ()
     BASE58_PREFIXES = {'PUBKEY_ADDR':0x1c,
                        'SCRIPT_ADDR':0x57,
                        'SECRET_KEY' :0xbb}
