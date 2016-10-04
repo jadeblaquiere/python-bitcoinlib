@@ -440,6 +440,64 @@ class CBlockHeader(ImmutableSerializable):
                 (self.__class__.__name__, self.nVersion, b2lx(self.hashPrevBlock), b2lx(self.hashMerkleRoot),
                  self.nTime, self.nBits, self.nNonce)
 
+class CNewBlockHeader(ImmutableSerializable):
+    """A block header"""
+    __slots__ = ['nVersion', 'hashPrevBlock', 'hashMerkleRoot', 'nTime', 'nBits', 'msgNonceA', 'msgNonceB']
+
+    def __init__(self, nVersion=2, hashPrevBlock=b'\x00'*32, hashMerkleRoot=b'\x00'*32, nTime=0, nBits=0, msgNonceA=None, msgNonceB=None):
+        object.__setattr__(self, 'nVersion', nVersion)
+        assert len(hashPrevBlock) == 32
+        object.__setattr__(self, 'hashPrevBlock', hashPrevBlock)
+        assert len(hashMerkleRoot) == 32
+        object.__setattr__(self, 'hashMerkleRoot', hashMerkleRoot)
+        object.__setattr__(self, 'nTime', nTime)
+        object.__setattr__(self, 'nBits', nBits)
+        object.__setattr__(self, 'msgNonceA', msgNonceA)
+        object.__setattr__(self, 'msgNonceB', msgNonceB)
+
+    @classmethod
+    def stream_deserialize(cls, f):
+        nVersion = struct.unpack(b"<i", ser_read(f,4))[0]
+        hashPrevBlock = ser_read(f,32)
+        hashMerkleRoot = ser_read(f,32)
+        nTime = struct.unpack(b"<I", ser_read(f,4))[0]
+        nBits = struct.unpack(b"<I", ser_read(f,4))[0]
+        msgNonceA = ser_read(f,180)
+        msgNonceB = ser_read(f,180)
+        return cls(nVersion, hashPrevBlock, hashMerkleRoot, nTime, nBits, msgNonceA, msgNonceB)
+
+    def stream_serialize(self, f):
+        f.write(struct.pack(b"<i", self.nVersion))
+        assert len(self.hashPrevBlock) == 32
+        f.write(self.hashPrevBlock)
+        assert len(self.hashMerkleRoot) == 32
+        f.write(self.hashMerkleRoot)
+        f.write(struct.pack(b"<I", self.nTime))
+        f.write(struct.pack(b"<I", self.nBits))
+        assert len(self.msgNonceA) == 180
+        f.write(self.msgNonceA)
+        assert len(self.msgNonceB) == 180
+        f.write(self.msgNonceB)
+
+    @staticmethod
+    def calc_difficulty(nBits):
+        """Calculate difficulty from nBits target"""
+        nShift = (nBits >> 24) & 0xff
+        dDiff = float(0x0000ffff) / float(nBits & 0x00ffffff)
+        while nShift < 29:
+            dDiff *= 256.0
+            nShift += 1
+        while nShift > 29:
+            dDiff /= 256.0
+            nShift -= 1
+        return dDiff
+    difficulty = property(lambda self: CBlockHeader.calc_difficulty(self.nBits))
+
+    def __repr__(self):
+        return "%s(%i, lx(%s), lx(%s), %s, 0x%08x, x(%s), x(%s))" % \
+                (self.__class__.__name__, self.nVersion, b2lx(self.hashPrevBlock), b2lx(self.hashMerkleRoot),
+                 self.nTime, self.nBits, x(self.msgNonceA), x(self.msgNonceB))
+
 class CBlock(CBlockHeader):
     """A block including all transactions in it"""
     __slots__ = ['vtx', 'vMerkleTree']
@@ -539,6 +597,106 @@ class CBlock(CBlockHeader):
             object.__setattr__(self, '_cached_GetHash', _cached_GetHash)
             return _cached_GetHash
 
+class CNewBlock(CNewBlockHeader):
+    """A block including all transactions in it"""
+    __slots__ = ['vtx', 'vMerkleTree']
+
+    @staticmethod
+    def build_merkle_tree_from_txids(txids):
+        """Build a full CBlock merkle tree from txids
+
+        txids - iterable of txids
+
+        Returns a new merkle tree in deepest first order. The last element is
+        the merkle root.
+
+        WARNING! If you're reading this because you're learning about crypto
+        and/or designing a new system that will use merkle trees, keep in mind
+        that the following merkle tree algorithm has a serious flaw related to
+        duplicate txids, resulting in a vulnerability. (CVE-2012-2459) Bitcoin
+        has since worked around the flaw, but for new applications you should
+        use something different; don't just copy-and-paste this code without
+        understanding the problem first.
+        """
+        merkle_tree = list(txids)
+
+        size = len(txids)
+        j = 0
+        while size > 1:
+            for i in range(0, size, 2):
+                i2 = min(i+1, size-1)
+                merkle_tree.append(Hash(merkle_tree[j+i] + merkle_tree[j+i2]))
+
+            j += size
+            size = (size + 1) // 2
+
+        return merkle_tree
+
+    @staticmethod
+    def build_merkle_tree_from_txs(txs):
+        """Build a full merkle tree from transactions"""
+        txids = [tx.GetHash() for tx in txs]
+        return CNewBlock.build_merkle_tree_from_txids(txids)
+
+    def calc_merkle_root(self):
+        """Calculate the merkle root
+
+        The calculated merkle root is not cached; every invocation
+        re-calculates it from scratch.
+        """
+        if not len(self.vtx):
+            raise ValueError('Block contains no transactions')
+        return self.build_merkle_tree_from_txs(self.vtx)[-1]
+
+    def __init__(self, nVersion=2, hashPrevBlock=b'\x00'*32, hashMerkleRoot=b'\x00'*32, nTime=0, nBits=0, msgNonceA=None, msgNonceB=None, vtx=()):
+        """Create a new block"""
+        super(CNewBlock, self).__init__(nVersion, hashPrevBlock, hashMerkleRoot, nTime, nBits, msgNonceA, msgNonceB)
+
+        vMerkleTree = tuple(CNewBlock.build_merkle_tree_from_txs(vtx))
+        object.__setattr__(self, 'vMerkleTree', vMerkleTree)
+        object.__setattr__(self, 'vtx', tuple(CTransaction.from_tx(tx) for tx in vtx))
+
+    @classmethod
+    def stream_deserialize(cls, f):
+        self = super(CNewBlock, cls).stream_deserialize(f)
+
+        vtx = VectorSerializer.stream_deserialize(CTransaction, f)
+        vMerkleTree = tuple(CNewBlock.build_merkle_tree_from_txs(vtx))
+        object.__setattr__(self, 'vMerkleTree', vMerkleTree)
+        object.__setattr__(self, 'vtx', tuple(vtx))
+
+        return self
+
+    def stream_serialize(self, f):
+        super(CNewBlock, self).stream_serialize(f)
+        VectorSerializer.stream_serialize(CTransaction, self.vtx, f)
+
+    def get_header(self):
+        """Return the block header
+
+        Returned header is a new object.
+        """
+        return CNewBlockHeader(nVersion=self.nVersion,
+                            hashPrevBlock=self.hashPrevBlock,
+                            hashMerkleRoot=self.hashMerkleRoot,
+                            nTime=self.nTime,
+                            nBits=self.nBits,
+                            msgNonceA=self.msgNonceA, 
+                            msgNonceB=self.msgNonceB)
+
+    def GetHash(self):
+        """Return the block hash
+
+        Note that this is the hash of the header, not the entire serialized
+        block.
+        """
+        try:
+            return self._cached_GetHash
+        except AttributeError:
+            _cached_GetHash = self.get_header().GetHash()
+            object.__setattr__(self, '_cached_GetHash', _cached_GetHash)
+            return _cached_GetHash
+
 class CoreChainParams(object):
     """Define consensus-critical parameters of a given instance of the Bitcoin system"""
     MAX_MONEY = None
@@ -571,6 +729,13 @@ class CTRedNetParams(CoreMainParams):
     SUBSIDY_HALVING_INTERVAL = 210000
     PROOF_OF_WORK_LIMIT = 2**240-1 >> 1
 
+class CTIndigoNetParams(CoreMainParams):
+    MAX_MONEY = 210000000 * COIN
+    NAME = 'ctindigonet'
+    GENESIS_BLOCK = CBlock.deserialize(x('0100000000000000000000000000000000000000000000000000000000000000000000004705376087b1557c5987eb7af3a75be1f0d4f7b82edfbe7d344c731f2cfb483380c61e57ffff071e39261c000101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4704ffff001d01043f5468652054696d65732032332f4170722f323031362046424920656e6473207374616e642d6f66662077697468204170706c65206f766572206950686f6e65ffffffff0100f2052a01000000434104eb0bd15ca4f9b55247ca49c0a9d1727e01990c6b4c311a32f31bf7844589a9c1e2396c19d0d2c4ff9f7e2f29db55906d1046321cfb05ae94a3fe4c0210392847ac00000000'))
+    SUBSIDY_HALVING_INTERVAL = 210000
+    PROOF_OF_WORK_LIMIT = 2**248-1 >> 1
+
 """Master global setting for what core chain params we're using"""
 coreparams = CoreMainParams()
 
@@ -589,6 +754,8 @@ def _SelectCoreParams(name):
         coreparams = CoreRegTestParams()
     elif name == 'ctrednet':
         coreparams = CTRedNetParams()
+    elif name == 'ctindigonet':
+        coreparams = CTIndigoNetParams()
     else:
         raise ValueError('Unknown chain %r' % name)
 
@@ -775,6 +942,8 @@ __all__ = (
         'CMutableTransaction',
         'CBlockHeader',
         'CBlock',
+        'CNewBlockHeader',
+        'CNewBlock',
         'CoreChainParams',
         'CoreMainParams',
         'CoreTestNetParams',

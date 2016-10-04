@@ -16,7 +16,7 @@ import ctcoin.core
 # Note that setup.py can break if __init__.py imports any external
 # dependencies, as these might not be installed when setup.py runs. In this
 # case __version__ could be moved to a separate version.py and imported here.
-__version__ = '0.5.2-SNAPSHOT'
+__version__ = '0.6.0'
 
 class MainParams(ctcoin.core.CoreMainParams):
     MESSAGE_START = b'\xf9\xbe\xb4\xd9'
@@ -93,5 +93,7 @@ def SelectParams(name):
         params = ctcoin.core.coreparams = RegTestParams()
     elif name == 'ctrednet':
         params = ctcoin.core.coreparams = CTRedParams()
+    elif name == 'ctindigonet':
+        params = ctcoin.core.coreparams = CTIndigoParams()
     else:
         raise ValueError('Unknown chain %r' % name)
