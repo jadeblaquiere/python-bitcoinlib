@@ -43,9 +43,11 @@ except ImportError:
     import urlparse
 
 import ctcoin
-from ctcoin.core import COIN, lx, b2lx, CBlock, CBlockHeader, CTransaction, COutPoint, CTxOut
+from ctcoin.core import COIN, lx, b2lx, CBlock, CNewBlock, CBlockHeader, CTransaction, COutPoint, CTxOut
 from ctcoin.core.script import CScript
 from ctcoin.wallet import CBitcoinAddress, CBitcoinSecret
+
+import struct
 
 DEFAULT_USER_AGENT = "AuthServiceProxy/0.1"
 
@@ -367,7 +369,11 @@ class Proxy(BaseProxy):
         except JSONRPCError as ex:
             raise IndexError('%s.getblockheader(): %s (%d)' %
                     (self.__class__.__name__, ex.error['message'], ex.error['code']))
-        return CBlockHeader.deserialize(unhexlify(r))
+        blockver = struct.unpack("<i",unhexlify(r[:8]))[0]
+        if blockver > 100:
+            return CNewBlockHeader.deserialize(unhexlify(r))
+        else:
+            return CBlockHeader.deserialize(unhexlify(r))
 
 
     def getblock(self, block_hash):
@@ -385,7 +391,11 @@ class Proxy(BaseProxy):
         except JSONRPCError as ex:
             raise IndexError('%s.getblock(): %s (%d)' %
                     (self.__class__.__name__, ex.error['message'], ex.error['code']))
-        return CBlock.deserialize(unhexlify(r))
+        blockver = struct.unpack("<i",unhexlify(r[:8]))[0]
+        if blockver > 100:
+            return CNewBlock.deserialize(unhexlify(r))
+        else:
+            return CBlock.deserialize(unhexlify(r))
 
     def getblockcount(self):
         """Return the number of blocks in the longest block chain"""
