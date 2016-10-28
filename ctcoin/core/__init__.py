@@ -12,6 +12,7 @@
 from __future__ import absolute_import, division, print_function
 
 import binascii
+import hashlib
 import struct
 import sys
 import time
@@ -19,6 +20,8 @@ import time
 from .script import CScript
 
 from .serialize import *
+
+from .key import CECKey
 
 # Core definitions
 COIN = 100000000
@@ -99,6 +102,12 @@ def str_money_value(value):
     if r[-1] == '.':
         r += '0'
     return r
+
+def ShaMulShaHash(msg):
+    """SHA256*EC_Mul*SHA256)(msg) -> bytes"""
+    key = CECKey()
+    key.set_secretbytes(hashlib.sha256(msg).digest())
+    return hashlib.sha256(key.get_pubkey()).digest()
 
 
 class ValidationError(Exception):
@@ -462,8 +471,8 @@ class CNewBlockHeader(ImmutableSerializable):
         hashMerkleRoot = ser_read(f,32)
         nTime = struct.unpack(b"<I", ser_read(f,4))[0]
         nBits = struct.unpack(b"<I", ser_read(f,4))[0]
-        msgNonceA = ser_read(f,180)
-        msgNonceB = ser_read(f,180)
+        msgNonceA = ser_read(f,192)
+        msgNonceB = ser_read(f,192)
         return cls(nVersion, hashPrevBlock, hashMerkleRoot, nTime, nBits, msgNonceA, msgNonceB)
 
     def stream_serialize(self, f):
@@ -474,9 +483,9 @@ class CNewBlockHeader(ImmutableSerializable):
         f.write(self.hashMerkleRoot)
         f.write(struct.pack(b"<I", self.nTime))
         f.write(struct.pack(b"<I", self.nBits))
-        assert len(self.msgNonceA) == 180
+        assert len(self.msgNonceA) == 192
         f.write(self.msgNonceA)
-        assert len(self.msgNonceB) == 180
+        assert len(self.msgNonceB) == 192
         f.write(self.msgNonceB)
 
     @staticmethod
@@ -497,6 +506,22 @@ class CNewBlockHeader(ImmutableSerializable):
         return "%s(%i, lx(%s), lx(%s), %s, 0x%08x, x(%s), x(%s))" % \
                 (self.__class__.__name__, self.nVersion, b2lx(self.hashPrevBlock), b2lx(self.hashMerkleRoot),
                  self.nTime, self.nBits, x(self.msgNonceA), x(self.msgNonceB))
+
+    def GetHash(self):
+        """Return the block header hash for CNewBlockHeader
+
+        CNewBlock/CNewBlockHeader hashes use sha(ecc_mul(sha(header)))
+        instead of the traditional sha(sha(header))
+
+        Note that this is the hash of the header, not the entire serialized
+        block.
+        """
+        try:
+            return self._cached_GetHash
+        except AttributeError:
+            _cached_GetHash = ShaMulShaHash(self.serialize())
+            object.__setattr__(self, '_cached_GetHash', _cached_GetHash)
+            return _cached_GetHash
 
 class CBlock(CBlockHeader):
     """A block including all transactions in it"""
